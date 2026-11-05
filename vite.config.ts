@@ -11,6 +11,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
+        base: '/NHCH1/',
       base: process.env.GITHUB_PAGES ? '/NHCH/' : '/',
       server: {
         port: 3000,
