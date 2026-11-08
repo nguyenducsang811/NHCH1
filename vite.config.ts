@@ -11,8 +11,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
 
   return {
-    // Duong dan chinh xac cho GitHub Pages NHCH1
-    base: mode === 'production' ? '/NHCH1/' : '/',
+    base: '/NHCH1/',
 
     server: {
       port: 3000,
