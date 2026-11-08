@@ -342,7 +342,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
     const isTHCS = isGradeTHCS(smartConfig.grade);
     const key = isTHCS ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
     const codesInBank = bankIndex[key]?.chapters || new Set<string>();
-    const curriculum = isTHCS ? (CURRICULUM_DATA[smartConfig.grade]?.chapters || []) : ((CURRICULUM_DATA[smartConfig.grade] as any)?.[smartConfig.subject as SubjectCode] || []);
+    const curriculum = getCurriculumChapters(smartConfig.grade, smartConfig.subject);
     const result = [...curriculum];
     codesInBank.forEach(code => {
       if (!result.find(c => c.code === code)) result.push({ code, title: `Chương ${code} (Dữ liệu nạp)`, lessons: [] });
@@ -364,7 +364,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
 
   // Statistics for currently selected Grade, Subject, Chapter, Lesson
   const lessonPool = useMemo(() => {
-    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade];
+    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade] || smartConfig.grade;
     const isTHCS = isGradeTHCS(smartConfig.grade);
     return questions.filter((q: Question) => 
       q.meta.grade === targetGradeCode &&
@@ -410,9 +410,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       const next = { ...prev, ...updates };
       if (updates.grade || updates.subject) {
         const isNextTHCS = isGradeTHCS(next.grade);
-        const newChapters = isNextTHCS 
-          ? (CURRICULUM_DATA[next.grade]?.chapters || []) 
-          : ((CURRICULUM_DATA[next.grade] as any)?.[next.subject as SubjectCode] || []);
+        const newChapters = getCurriculumChapters(next.grade, next.subject);
         next.chapter = newChapters[0]?.code || (isNextTHCS ? 'C1' : '1');
         const newLessons = newChapters[0]?.lessons || [];
         next.lesson = newLessons[0]?.code || '1';
