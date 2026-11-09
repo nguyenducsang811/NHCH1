@@ -60,6 +60,7 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
   const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
+  const [copiedGroupKey, setCopiedGroupKey] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -325,6 +326,8 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
 
   const copyLessonLaTeX = (group: GroupedLesson) => {
     const text = buildLessonLaTeXContent(group);
+    setCopiedGroupKey(group.groupKey);
+    setTimeout(() => setCopiedGroupKey(null), 1800);
     copyTextToClipboard(
       text,
       `Đã copy ${group.questions.length} câu LaTeX của [${group.fileNoteCode}]!`
@@ -673,7 +676,7 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
                         className="px-3.5 py-2.5 bg-slate-800/60 hover:bg-slate-800/90 flex items-center justify-between gap-3 cursor-pointer transition-colors select-none"
                       >
                         <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                          {/* Mã tệp chuẩn NHCH (VD: 0D6-B1) */}
+                          {/* Mã tệp chuẩn NHCH (VD: 7-C1-B1, 0D6-B1) */}
                           <button
                             type="button"
                             onClick={(e) => {
@@ -685,6 +688,24 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
                           >
                             <FolderGit2 size={14} className="text-cyan-400 shrink-0" />
                             <span>{group.fileNoteCode}</span>
+                          </button>
+
+                          {/* Nút Copy LaTeX đặt ngay sát cạnh mã ID tệp để bấm chính xác ngay lập tức */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyLessonLaTeX(group);
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 active:scale-95 border ${
+                              copiedGroupKey === group.groupKey
+                                ? 'bg-emerald-600 text-white border-emerald-400 shadow-md'
+                                : 'bg-blue-600/30 hover:bg-blue-600 text-blue-200 hover:text-white border-blue-500/40'
+                            }`}
+                            title={`Copy toàn bộ ${group.questions.length} câu LaTeX của bài ${group.fileNoteCode}`}
+                          >
+                            {copiedGroupKey === group.groupKey ? <Check size={12} /> : <Copy size={12} />}
+                            <span>{copiedGroupKey === group.groupKey ? 'Đã copy!' : 'Copy LaTeX'}</span>
                           </button>
 
                           {/* Lớp */}
@@ -713,15 +734,8 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
                           </span>
                         </div>
 
-                        {/* Nút thao tác gọn trên 1 hàng */}
+                        {/* Nút thao tác phụ bên phải */}
                         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => copyLessonLaTeX(group)}
-                            className="px-2.5 py-1 bg-blue-600/25 hover:bg-blue-600 text-blue-200 hover:text-white border border-blue-500/40 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 active:scale-95"
-                            title={`Copy toàn bộ LaTeX bài này (${group.fileNoteCode})`}
-                          >
-                            <Copy size={12} /> Copy LaTeX
-                          </button>
                           <button
                             onClick={() => downloadLessonTexFile(group)}
                             className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 active:scale-95"
