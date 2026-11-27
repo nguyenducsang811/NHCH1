@@ -151,6 +151,66 @@ const DuplicateSettingsModal = ({ onClose, onStart }: { onClose: () => void, onS
   );
 };
 
+const normalizeLevel = (lv?: string): LevelCode | '' => {
+  if (!lv) return '';
+  if (lv === '1' || lv === 'N') return 'N';
+  if (lv === '2' || lv === 'H') return 'H';
+  if (lv === '3' || lv === 'V') return 'V';
+  if (lv === '4' || lv === 'C') return 'C';
+  return '';
+};
+
+// Thứ tự ưu tiên lấy mức độ: chính mức yêu cầu -> lùi về mức liền kề trước nó -> nếu hết mới mở rộng sang mức kế tiếp
+const LEVEL_FALLBACK_ORDER: Record<LevelCode, LevelCode[]> = {
+  'C': ['C', 'V', 'H', 'N'],
+  'V': ['V', 'H', 'N', 'C'],
+  'H': ['H', 'N', 'V', 'C'],
+  'N': ['N', 'H', 'V', 'C']
+};
+
+const pickFromPoolRoundRobin = (
+  pool: Question[],
+  count: number,
+  usedUids: Set<string>,
+  formPickCounts: Record<string, number>
+): Question[] => {
+  if (count <= 0 || pool.length === 0) return [];
+  const candidates = pool.filter(q => !usedUids.has(q.uid));
+  if (candidates.length === 0) return [];
+
+  const formGroups: Record<string, Question[]> = {};
+  candidates.forEach(q => {
+    const f = q.meta.form || '1';
+    if (!formGroups[f]) formGroups[f] = [];
+    formGroups[f].push(q);
+  });
+
+  // Shuffle questions within each form group
+  Object.keys(formGroups).forEach(f => {
+    formGroups[f].sort(() => Math.random() - 0.5);
+  });
+
+  const pickedList: Question[] = [];
+  while (pickedList.length < count) {
+    const nonEmptyForms = Object.keys(formGroups).filter(f => formGroups[f].length > 0);
+    if (nonEmptyForms.length === 0) break;
+
+    // Pick form with minimum picks so far (random tie-break) to maximize form coverage
+    const minCount = Math.min(...nonEmptyForms.map(f => formPickCounts[f] || 0));
+    const leastPickedForms = nonEmptyForms.filter(f => (formPickCounts[f] || 0) === minCount);
+    const chosenForm = leastPickedForms[Math.floor(Math.random() * leastPickedForms.length)];
+
+    const nextQ = formGroups[chosenForm].pop();
+    if (nextQ && !usedUids.has(nextQ.uid)) {
+      usedUids.add(nextQ.uid);
+      formPickCounts[chosenForm] = (formPickCounts[chosenForm] || 0) + 1;
+      pickedList.push(nextQ);
+    }
+  }
+
+  return pickedList;
+};
+
 // --- MATRIX ROW ---
 const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
   const isTHCS = isGradeTHCS(data.grade);
@@ -166,7 +226,7 @@ const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
   const currentLesson = useMemo(() => lessons.find(l => l.code === data.lesson), [lessons, data.lesson]);
   const forms = useMemo(() => currentLesson?.types || [], [currentLesson]);
 
-  const availablePool = useMemo(() => {
+  const scopePool = useMemo(() => {
     return allQuestions.filter((q: Question) => {
       const qGrade = q.meta.grade === '0' ? '10' : q.meta.grade === '1' ? '11' : q.meta.grade === '2' ? '12' : q.meta.grade;
       const isQTHCS = isGradeTHCS(qGrade);
@@ -175,11 +235,17 @@ const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
       if (data.chapter !== 'ALL' && q.meta.chapter !== data.chapter) return false;
       if (data.lesson !== 'ALL' && q.meta.lesson !== data.lesson) return false;
       if (data.form !== 'ALL' && q.meta.form !== data.form) return false;
-      if (data.level !== 'ALL' && q.level !== data.level) return false;
       if (data.type !== 'ALL' && q.type !== data.type) return false;
       return true;
     });
   }, [allQuestions, data]);
+
+  const availablePool = useMemo(() => {
+    if (data.level === 'ALL') return scopePool;
+    return scopePool.filter((q: Question) => normalizeLevel(q.level) === data.level);
+  }, [scopePool, data.level]);
+
+  const maxAllowed = data.level === 'ALL' ? availablePool.length : scopePool.length;
 
   const selectStyle = "w-full h-10 bg-slate-900/80 border border-slate-700/50 rounded-xl px-2 text-[11px] font-bold outline-none text-white focus:border-indigo-500/50 transition-all appearance-none cursor-pointer";
   const availSubs = useMemo(() => getAvailableSubjects(data.grade), [data.grade]);
@@ -236,14 +302,19 @@ const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
           <option value="T">Tự luận</option>
         </select>
       </td>
-      <td className="p-2 text-center font-bold text-slate-500 text-[11px]">{availablePool.length}</td>
+      <td className="p-2 text-center font-bold text-slate-500 text-[11px]" title={data.level !== 'ALL' && scopePool.length > availablePool.length ? `Mức ${data.level}: ${availablePool.length} câu (Tổng bài có ${scopePool.length} câu có thể bù mức liền kề)` : undefined}>
+        {availablePool.length}
+        {data.level !== 'ALL' && scopePool.length > availablePool.length && (
+          <span className="text-[9px] text-amber-400/80 block">/{scopePool.length}</span>
+        )}
+      </td>
       <td className="p-2 w-24">
         <input 
           type="number" 
           min="0" 
-          max={availablePool.length}
+          max={maxAllowed}
           value={data.neededCount} 
-          onChange={e => onUpdate(data.id, { neededCount: Math.min(availablePool.length, Math.max(0, parseInt(e.target.value) || 0)) })} 
+          onChange={e => onUpdate(data.id, { neededCount: Math.min(maxAllowed, Math.max(0, parseInt(e.target.value) || 0)) })} 
           className="w-full h-10 bg-[#0f172a] border border-slate-700 rounded-xl text-center text-[12px] font-black text-blue-400 outline-none focus:border-indigo-500 transition-all"
         />
       </td>
@@ -258,6 +329,7 @@ const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
 const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   const [activeTab, setActiveTab] = useState<'MATRIX' | 'SMART'>('SMART');
   const [rows, setRows] = useState<any[]>([{ id: '1', grade: 'ALL', subject: 'ALL', chapter: 'ALL', lesson: 'ALL', form: 'ALL', type: 'ALL', level: 'ALL', neededCount: 0 }]);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   
   interface LevelCounts {
     N: number;
@@ -432,17 +504,39 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   const updateRow = (id: string, newData: any) => setRows(rows.map(r => r.id === id ? { ...r, ...newData } : r));
   const removeRow = (id: string) => rows.length > 1 && setRows(rows.filter(r => r.id !== id));
 
+  // Tự động chọn bài học đầu tiên có câu hỏi khi mở modal nếu phạm vi mặc định đang trống
+  useEffect(() => {
+    if (questions.length === 0 || lessonPool.length > 0) return;
+    const firstValid = questions.find((q: Question) => q.meta.grade && q.meta.chapter && q.meta.lesson);
+    if (!firstValid) return;
+    const g = firstValid.meta.grade === '0' ? '10' : firstValid.meta.grade === '1' ? '11' : firstValid.meta.grade === '2' ? '12' : firstValid.meta.grade;
+    const isFirstTHCS = isGradeTHCS(g);
+    setSmartConfig(prev => {
+      const next: SmartPickConfig = {
+        ...prev,
+        grade: g,
+        subject: isFirstTHCS ? 'D' : (firstValid.meta.subject || 'D'),
+        chapter: firstValid.meta.chapter,
+        lesson: firstValid.meta.lesson
+      };
+      localStorage.setItem('smartPickConfig_v3', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   const handleSmartExecute = () => {
+    setStatusNotice(null);
     const activeTypes = (Object.entries(smartConfig.selectedTypes)
       .filter(([_, val]) => val)
       .map(([key]) => key)) as QuestionType[];
 
     if (activeTypes.length === 0) {
-      alert("Vui lòng chọn ít nhất một loại câu hỏi!");
+      setStatusNotice("Vui lòng chọn ít nhất một loại câu hỏi!");
       return;
     }
 
-    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade];
+    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade] || smartConfig.grade;
+    const isTHCS = isGradeTHCS(smartConfig.grade);
     const finalSelected: Question[] = [];
     const usedUids = new Set<string>();
 
@@ -471,7 +565,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
 
       const typePool = questions.filter((q: Question) => 
         q.meta.grade === targetGradeCode &&
-        q.meta.subject === smartConfig.subject &&
+        (isTHCS || q.meta.subject === smartConfig.subject) &&
         q.meta.chapter === smartConfig.chapter &&
         q.meta.lesson === smartConfig.lesson &&
         q.type === type
@@ -479,109 +573,104 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
 
       if (typePool.length === 0) return;
 
-      const levels: LevelCode[] = ['N', 'H', 'V', 'C'];
-      
-      levels.forEach(lv => {
+      const formPickCounts: Record<string, number> = {};
+      const deficits: Record<LevelCode, number> = { N: 0, H: 0, V: 0, C: 0 };
+      const exactOrder: LevelCode[] = ['N', 'H', 'V', 'C'];
+
+      // BƯỚC 1: Bốc đúng mức độ trước (xoay vòng qua các dạng bài để phủ đều)
+      exactOrder.forEach(lv => {
         const targetForLevel = levelTargets[lv];
         if (targetForLevel <= 0) return;
 
-        const levelPool = typePool.filter(q => {
-          let qLv = q.level;
-          if (qLv === '1') qLv = 'N';
-          if (qLv === '2') qLv = 'H';
-          if (qLv === '3') qLv = 'V';
-          if (qLv === '4') qLv = 'C';
-          return qLv === lv && !usedUids.has(q.uid);
-        });
-
-        if (levelPool.length === 0) return;
-
-        // Group levelPool by form (dạng bài) to ensure round-robin distribution (phủ rộng các dạng bài)
-        const availableForms: string[] = (Array.from(new Set(levelPool.map(q => q.meta.form || '1'))) as string[]).sort();
-        
-        // Shuffle questions within each form group for randomness
-        const formGroups: Record<string, Question[]> = {};
-        availableForms.forEach(f => {
-          formGroups[f] = levelPool.filter(q => (q.meta.form || '1') === f).sort(() => Math.random() - 0.5);
-        });
-
-        let levelPickedCount = 0;
-        let formIndex = 0;
-
-        while (levelPickedCount < targetForLevel) {
-          let progressInRound = false;
-          
-          for (let i = 0; i < availableForms.length; i++) {
-            const currentForm = availableForms[(formIndex + i) % availableForms.length];
-            const group = formGroups[currentForm];
-            
-            const nextQIndex = group.findIndex(q => !usedUids.has(q.uid));
-            if (nextQIndex !== -1) {
-              const picked = group.splice(nextQIndex, 1)[0];
-              finalSelected.push(picked);
-              usedUids.add(picked.uid);
-              levelPickedCount++;
-              progressInRound = true;
-              if (levelPickedCount >= targetForLevel) break;
-            }
-          }
-          
-          if (!progressInRound) break; // Exhausted available pool for this level
-          formIndex = (formIndex + 1) % availableForms.length;
-        }
+        const exactPool = typePool.filter(q => normalizeLevel(q.level) === lv && !usedUids.has(q.uid));
+        const picked = pickFromPoolRoundRobin(exactPool, targetForLevel, usedUids, formPickCounts);
+        finalSelected.push(...picked);
+        deficits[lv] = targetForLevel - picked.length;
       });
+
+      // BƯỚC 2: Nếu thiếu câu ở mức độ nào, tự động bù bằng mức độ liền kề trước nó (VD: VDC -> VD -> TH -> NB)
+      const fallbackProcessOrder: LevelCode[] = ['C', 'V', 'H', 'N'];
+      fallbackProcessOrder.forEach(lv => {
+        let remaining = deficits[lv];
+        if (remaining <= 0) return;
+
+        const fallbackLevels = LEVEL_FALLBACK_ORDER[lv].slice(1);
+        for (const fbLv of fallbackLevels) {
+          if (remaining <= 0) break;
+          const fbPool = typePool.filter(q => normalizeLevel(q.level) === fbLv && !usedUids.has(q.uid));
+          if (fbPool.length === 0) continue;
+
+          const picked = pickFromPoolRoundRobin(fbPool, remaining, usedUids, formPickCounts);
+          finalSelected.push(...picked);
+          remaining -= picked.length;
+        }
+        deficits[lv] = remaining;
+      });
+
+      // BƯỚC 3: Nếu vẫn thiếu và còn câu chưa rõ mức độ trong cùng bài học, lấy nốt để đảm bảo đủ số lượng
+      const totalStillNeeded = deficits.N + deficits.H + deficits.V + deficits.C;
+      if (totalStillNeeded > 0) {
+        const leftoverPool = typePool.filter(q => !usedUids.has(q.uid));
+        const picked = pickFromPoolRoundRobin(leftoverPool, totalStillNeeded, usedUids, formPickCounts);
+        finalSelected.push(...picked);
+      }
     });
 
     if (finalSelected.length === 0) {
-      alert("Không tìm thấy câu hỏi nào phù hợp trong kho dữ liệu!");
+      setStatusNotice("Bài học đang chọn hiện có 0 câu thuộc loại đã tích trong kho. Hãy kiểm tra lại Chương / Bài hoặc loại câu hỏi!");
     } else {
       onConfirm(finalSelected);
     }
   };
 
   const handleMatrixExecute = () => {
-    let globalSelectedUids = new Set<string>();
-    let finalQuestions: Question[] = [];
+    setStatusNotice(null);
+    const globalSelectedUids = new Set<string>();
+    const finalQuestions: Question[] = [];
 
     rows.forEach(row => {
       if (row.neededCount <= 0) return;
-      let pool = questions.filter((q: Question) => {
+      const basePool = questions.filter((q: Question) => {
         const qGrade = q.meta.grade === '0' ? '10' : q.meta.grade === '1' ? '11' : q.meta.grade === '2' ? '12' : q.meta.grade;
+        const isQTHCS = isGradeTHCS(qGrade);
         return (row.grade === 'ALL' || qGrade === row.grade) && 
-               (row.subject === 'ALL' || q.meta.subject === row.subject) && 
+               (row.subject === 'ALL' || isQTHCS || q.meta.subject === row.subject) && 
                (row.chapter === 'ALL' || q.meta.chapter === row.chapter) && 
                (row.lesson === 'ALL' || q.meta.lesson === row.lesson) && 
                (row.form === 'ALL' || q.meta.form === row.form) && 
-               (row.level === 'ALL' || q.level === row.level) && 
                (row.type === 'ALL' || q.type === row.type) && 
                !globalSelectedUids.has(q.uid);
       });
-      if (pool.length === 0) return;
-      const groups: Record<string, Question[]> = {};
-      pool.forEach(q => {
-        const key = `${q.meta.lesson}_${q.meta.form}_${q.level}`;
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(q);
-      });
-      Object.keys(groups).forEach(k => groups[k] = groups[k].sort(() => Math.random() - 0.5));
-      const groupKeys = Object.keys(groups).sort(() => Math.random() - 0.5);
-      let count = 0;
-      while (count < row.neededCount) {
-        let pickedInThisRound = false;
-        for (const key of groupKeys) {
-          if (groups[key].length > 0) {
-            const picked = groups[key].pop()!;
-            globalSelectedUids.add(picked.uid);
-            finalQuestions.push(picked);
-            count++;
-            pickedInThisRound = true;
-            if (count >= row.neededCount) break;
-          }
+      if (basePool.length === 0) return;
+
+      const formPickCounts: Record<string, number> = {};
+      if (row.level === 'ALL') {
+        const picked = pickFromPoolRoundRobin(basePool, row.neededCount, globalSelectedUids, formPickCounts);
+        finalQuestions.push(...picked);
+      } else {
+        let remaining = row.neededCount;
+        const levelOrder = LEVEL_FALLBACK_ORDER[row.level as LevelCode] || [row.level as LevelCode];
+        for (const lv of levelOrder) {
+          if (remaining <= 0) break;
+          const lvPool = basePool.filter(q => normalizeLevel(q.level) === lv && !globalSelectedUids.has(q.uid));
+          if (lvPool.length === 0) continue;
+          const picked = pickFromPoolRoundRobin(lvPool, remaining, globalSelectedUids, formPickCounts);
+          finalQuestions.push(...picked);
+          remaining -= picked.length;
         }
-        if (!pickedInThisRound) break;
+        if (remaining > 0) {
+          const leftover = basePool.filter(q => !globalSelectedUids.has(q.uid));
+          const picked = pickFromPoolRoundRobin(leftover, remaining, globalSelectedUids, formPickCounts);
+          finalQuestions.push(...picked);
+        }
       }
     });
-    onConfirm(finalQuestions);
+
+    if (finalQuestions.length === 0) {
+      setStatusNotice("Chưa có câu hỏi nào được chọn. Hãy nhập số lượng cần lấy ở các dòng có câu trong kho!");
+    } else {
+      onConfirm(finalQuestions);
+    }
   };
 
   const typeMapInfo = [
@@ -684,13 +773,21 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                   <div className="space-y-1 col-span-2 md:col-span-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Chương học</label>
                     <select value={smartConfig.chapter} onChange={e => updateSmartConfig({chapter: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 truncate text-xs shadow-inner">
-                      {dynamicChapters.map(c => <option key={c.code} value={c.code}>{c.title}</option>)}
+                      {dynamicChapters.map(c => {
+                        const key = isGradeTHCS(smartConfig.grade) ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
+                        const hasLessons = bankIndex[key]?.lessons?.[c.code]?.size || 0;
+                        return <option key={c.code} value={c.code}>{c.title}{hasLessons > 0 ? ` • Có dữ liệu` : ''}</option>;
+                      })}
                     </select>
                   </div>
                   <div className="space-y-1 col-span-2 md:col-span-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Bài học</label>
                     <select value={smartConfig.lesson} onChange={e => updateSmartConfig({lesson: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 truncate text-xs shadow-inner">
-                      {dynamicLessons.map(l => <option key={l.code} value={l.code}>{l.title}</option>)}
+                      {dynamicLessons.map(l => {
+                        const key = isGradeTHCS(smartConfig.grade) ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
+                        const countInLesson = bankIndex[`${key}-${smartConfig.chapter}-${l.code}`]?.total || 0;
+                        return <option key={l.code} value={l.code}>{l.title}{countInLesson > 0 ? ` (${countInLesson} câu)` : ''}</option>;
+                      })}
                     </select>
                   </div>
                 </div>
@@ -799,7 +896,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                                 type="number" 
                                 disabled={!isChecked}
                                 min="0"
-                                max={tInfo.available.N}
+                                max={totalInBank}
                                 value={smartConfig.customLevelTargets[typeKey]?.N ?? 0}
                                 onChange={e => updateSmartConfig({
                                   customLevelTargets: {
@@ -821,7 +918,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                                 type="number" 
                                 disabled={!isChecked}
                                 min="0"
-                                max={tInfo.available.H}
+                                max={totalInBank}
                                 value={smartConfig.customLevelTargets[typeKey]?.H ?? 0}
                                 onChange={e => updateSmartConfig({
                                   customLevelTargets: {
@@ -843,7 +940,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                                 type="number" 
                                 disabled={!isChecked}
                                 min="0"
-                                max={tInfo.available.V}
+                                max={totalInBank}
                                 value={smartConfig.customLevelTargets[typeKey]?.V ?? 0}
                                 onChange={e => updateSmartConfig({
                                   customLevelTargets: {
@@ -865,7 +962,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                                 type="number" 
                                 disabled={!isChecked}
                                 min="0"
-                                max={tInfo.available.C}
+                                max={totalInBank}
                                 value={smartConfig.customLevelTargets[typeKey]?.C ?? 0}
                                 onChange={e => updateSmartConfig({
                                   customLevelTargets: {
@@ -891,12 +988,12 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                 })}
               </div>
 
-              {/* Form Coverage Guarantee Card */}
-              <div className="bg-slate-900/40 p-3 rounded-2xl border border-slate-800 flex items-center justify-between text-[11px] text-slate-300">
+              {/* Form Coverage & Adjacent Level Fallback Guarantee Card */}
+              <div className="bg-slate-900/40 p-3 rounded-2xl border border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-300">
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-emerald-400 flex-shrink-0" />
                   <span>
-                    Bật thuật toán <strong className="text-white">Phủ đều dạng bài (Form)</strong>: Tự động bốc xoay vòng qua tất cả <strong className="text-indigo-400">{availableStats.totalForms.size} dạng bài</strong> có trong bài học.
+                    <strong className="text-white">Phủ đều dạng bài ({availableStats.totalForms.size} dạng)</strong> & <strong className="text-amber-300">Tự động bù mức liền kề trước</strong> (VDC → VD → TH → NB) nếu thiếu câu ở mức độ yêu cầu.
                   </span>
                 </div>
                 <span className="text-[9px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/20 whitespace-nowrap">
@@ -909,10 +1006,19 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
         </div>
 
         {/* Modal Footer */}
-        <div className="px-5 py-3.5 border-t border-slate-700/80 flex justify-between items-center bg-slate-800/80">
-          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider flex items-center gap-2">
-            <CheckCircle size={16} className="text-emerald-500"/>
-            <span>Sẵn sàng bốc câu hỏi</span>
+        <div className="px-5 py-3.5 border-t border-slate-700/80 flex flex-wrap justify-between items-center gap-3 bg-slate-800/80">
+          <div className={`text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 ${statusNotice ? 'text-amber-400' : 'text-slate-400'}`}>
+            {statusNotice ? (
+              <>
+                <AlertTriangle size={16} className="text-amber-400 shrink-0"/>
+                <span>{statusNotice}</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle size={16} className="text-emerald-500 shrink-0"/>
+                <span>Sẵn sàng bốc câu hỏi</span>
+              </>
+            )}
           </div>
           <div className="flex gap-3 items-center">
             <button onClick={onClose} className="px-4 py-2 text-[11px] font-black uppercase text-slate-400 hover:text-white tracking-wider transition-all">
