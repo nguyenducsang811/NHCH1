@@ -169,10 +169,24 @@ const LEVEL_FALLBACK_ORDER: Record<LevelCode, LevelCode[]> = {
 };
 
 const compareFormCodes = (a: string, b: string): number => {
-  const numA = parseInt(a, 10);
-  const numB = parseInt(b, 10);
+  const numA = parseInt(a.replace(/^\D+/, ''), 10);
+  const numB = parseInt(b.replace(/^\D+/, ''), 10);
   if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numA - numB;
   return a.localeCompare(b, 'vi', { numeric: true });
+};
+
+const getFormBucketKey = (q: Question): string =>
+  `${q.meta.grade || ''}|${q.meta.subject || ''}|${q.meta.chapter || ''}|${q.meta.lesson || ''}|${q.meta.form || '1'}`;
+
+const compareBucketKeys = (a: string, b: string): number => {
+  const pa = a.split('|');
+  const pb = b.split('|');
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const cmp = compareFormCodes(pa[i] || '', pb[i] || '');
+    if (cmp !== 0) return cmp;
+  }
+  return 0;
 };
 
 const LEVEL_SORT_ORDER: Record<string, number> = { N: 0, H: 1, V: 2, C: 3 };
@@ -182,12 +196,12 @@ const interleaveByFormSequential = (picked: Question[]): Question[] => {
   if (picked.length <= 1) return picked;
   const groups: Record<string, Question[]> = {};
   picked.forEach(q => {
-    const f = q.meta.form || '1';
+    const f = getFormBucketKey(q);
     if (!groups[f]) groups[f] = [];
     groups[f].push(q);
   });
 
-  const sortedForms = Object.keys(groups).sort(compareFormCodes);
+  const sortedForms = Object.keys(groups).sort(compareBucketKeys);
   sortedForms.forEach(f => {
     groups[f].sort((a, b) => {
       const la = LEVEL_SORT_ORDER[normalizeLevel(a.level)] ?? 99;
@@ -222,12 +236,12 @@ const pickFromPoolRoundRobin = (
 
   const formGroups: Record<string, Question[]> = {};
   candidates.forEach(q => {
-    const f = q.meta.form || '1';
+    const f = getFormBucketKey(q);
     if (!formGroups[f]) formGroups[f] = [];
     formGroups[f].push(q);
   });
 
-  const sortedForms = Object.keys(formGroups).sort(compareFormCodes);
+  const sortedForms = Object.keys(formGroups).sort(compareBucketKeys);
 
   // Xáo trộn câu hỏi bên trong từng dạng để mỗi lần bốc không bị lặp đề
   sortedForms.forEach(f => {
@@ -400,7 +414,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
 
   const [smartConfig, setSmartConfig] = useState<SmartPickConfig>(() => {
     const defaultConfig: SmartPickConfig = {
-      grade: '10', subject: 'D', chapter: '1', lesson: '1',
+      grade: 'ALL', subject: 'ALL', chapter: 'ALL', lesson: 'ALL',
       selectedTypes: { C: true, F: true, S: true, T: true },
       targets: { C: 20, F: 10, S: 10, T: 10 },
       useCustomLevels: false,
@@ -411,13 +425,35 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
         T: { N: 3, H: 3, V: 2, C: 2 }
       }
     };
-    const saved = localStorage.getItem('smartPickConfig_v3');
-    if (saved) {
+    const savedV4 = localStorage.getItem('smartPickConfig_v4');
+    if (savedV4) {
       try { 
-        const parsed = JSON.parse(saved); 
+        const parsed = JSON.parse(savedV4); 
         return {
           ...defaultConfig,
           ...parsed,
+          selectedTypes: { ...defaultConfig.selectedTypes, ...(parsed.selectedTypes || {}) },
+          targets: { ...defaultConfig.targets, ...(parsed.targets || {}) },
+          customLevelTargets: {
+            C: { ...defaultConfig.customLevelTargets.C, ...(parsed.customLevelTargets?.C || {}) },
+            F: { ...defaultConfig.customLevelTargets.F, ...(parsed.customLevelTargets?.F || {}) },
+            S: { ...defaultConfig.customLevelTargets.S, ...(parsed.customLevelTargets?.S || {}) },
+            T: { ...defaultConfig.customLevelTargets.T, ...(parsed.customLevelTargets?.T || {}) }
+          }
+        };
+      } catch (e) { console.error(e); }
+    }
+    const savedLegacy = localStorage.getItem('smartPickConfig_v3');
+    if (savedLegacy) {
+      try {
+        const parsed = JSON.parse(savedLegacy);
+        return {
+          ...defaultConfig,
+          grade: parsed.grade || 'ALL',
+          subject: parsed.subject || 'ALL',
+          chapter: parsed.chapter || 'ALL',
+          lesson: 'ALL',
+          useCustomLevels: parsed.useCustomLevels ?? false,
           selectedTypes: { ...defaultConfig.selectedTypes, ...(parsed.selectedTypes || {}) },
           targets: { ...defaultConfig.targets, ...(parsed.targets || {}) },
           customLevelTargets: {
@@ -433,7 +469,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   });
 
   const bankIndex = useMemo(() => {
-    const index: any = {};
+    const index: any = { _grades: {} };
     questions.forEach((q: Question) => {
       const g = q.meta.grade === '0' ? '10' : q.meta.grade === '1' ? '11' : q.meta.grade === '2' ? '12' : q.meta.grade;
       const isTHCS = isGradeTHCS(g);
@@ -441,8 +477,10 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       const c = q.meta.chapter;
       const l = q.meta.lesson;
 
+      index._grades[g] = (index._grades[g] || 0) + 1;
+
       const key = `${g}-${s}`;
-      if (!index[key]) index[key] = { C: 0, F: 0, S: 0, T: 0, total: 0, chapters: new Set(), lessons: {} };
+      if (!index[key]) index[key] = { C: 0, F: 0, S: 0, T: 0, total: 0, chapters: new Set(), lessons: {}, chapterTotals: {} };
       
       const chapKey = `${key}-${c}`;
       if (!index[key].lessons[c]) index[key].lessons[c] = new Set();
@@ -452,6 +490,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       
       index[key].chapters.add(c);
       index[key].lessons[c].add(l);
+      index[key].chapterTotals[c] = (index[key].chapterTotals[c] || 0) + 1;
       index[key][q.type as QuestionType]++;
       index[key].total++;
       index[lessonKey][q.type as QuestionType]++;
@@ -461,39 +500,48 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   }, [questions]);
 
   const dynamicChapters = useMemo(() => {
+    if (smartConfig.grade === 'ALL') return [];
     const isTHCS = isGradeTHCS(smartConfig.grade);
+    if (!isTHCS && smartConfig.subject === 'ALL') return [];
     const key = isTHCS ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
     const codesInBank = bankIndex[key]?.chapters || new Set<string>();
     const curriculum = getCurriculumChapters(smartConfig.grade, smartConfig.subject);
     const result = [...curriculum];
-    codesInBank.forEach(code => {
+    codesInBank.forEach((code: string) => {
       if (!result.find(c => c.code === code)) result.push({ code, title: `Chương ${code} (Dữ liệu nạp)`, lessons: [] });
     });
     return result;
   }, [bankIndex, smartConfig.grade, smartConfig.subject]);
 
   const dynamicLessons = useMemo(() => {
+    if (smartConfig.grade === 'ALL' || smartConfig.chapter === 'ALL') return [];
     const isTHCS = isGradeTHCS(smartConfig.grade);
+    if (!isTHCS && smartConfig.subject === 'ALL') return [];
     const key = isTHCS ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
     const codesInBank = bankIndex[key]?.lessons[smartConfig.chapter] || new Set<string>();
     const curriculum = dynamicChapters.find(c => c.code === smartConfig.chapter)?.lessons || [];
     const result = [...curriculum];
-    codesInBank.forEach(code => {
+    codesInBank.forEach((code: string) => {
       if (!result.find(l => l.code === code)) result.push({ code, title: `Bài ${code} (Dữ liệu nạp)`, types: [] });
     });
     return result;
   }, [bankIndex, smartConfig.grade, smartConfig.subject, smartConfig.chapter, dynamicChapters]);
 
-  // Statistics for currently selected Grade, Subject, Chapter, Lesson
+  const matchesSmartScope = (q: Question, cfg: SmartPickConfig): boolean => {
+    if (cfg.grade !== 'ALL') {
+      const targetGradeCode = GRADE_TO_CODE[cfg.grade] || cfg.grade;
+      if (q.meta.grade !== targetGradeCode) return false;
+      const isTHCS = isGradeTHCS(cfg.grade);
+      if (!isTHCS && cfg.subject !== 'ALL' && q.meta.subject !== cfg.subject) return false;
+    }
+    if (cfg.chapter !== 'ALL' && q.meta.chapter !== cfg.chapter) return false;
+    if (cfg.lesson !== 'ALL' && q.meta.lesson !== cfg.lesson) return false;
+    return true;
+  };
+
+  // Statistics for currently selected Grade, Subject, Chapter, Lesson (supports 'ALL')
   const lessonPool = useMemo(() => {
-    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade] || smartConfig.grade;
-    const isTHCS = isGradeTHCS(smartConfig.grade);
-    return questions.filter((q: Question) => 
-      q.meta.grade === targetGradeCode &&
-      (isTHCS || q.meta.subject === smartConfig.subject) &&
-      q.meta.chapter === smartConfig.chapter &&
-      q.meta.lesson === smartConfig.lesson
-    );
+    return questions.filter((q: Question) => matchesSmartScope(q, smartConfig));
   }, [questions, smartConfig.grade, smartConfig.subject, smartConfig.chapter, smartConfig.lesson]);
 
   const availableStats = useMemo(() => {
@@ -519,8 +567,9 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
           stats[type][lv]++;
         }
         if (q.meta.form) {
-          stats[type].forms.add(q.meta.form);
-          totalForms.add(q.meta.form);
+          const bucketKey = getFormBucketKey(q);
+          stats[type].forms.add(bucketKey);
+          totalForms.add(bucketKey);
         }
       }
     });
@@ -531,18 +580,24 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   const updateSmartConfig = (updates: Partial<SmartPickConfig>) => {
     setSmartConfig(prev => {
       const next = { ...prev, ...updates };
-      if (updates.grade || updates.subject) {
-        const isNextTHCS = isGradeTHCS(next.grade);
-        const newChapters = getCurriculumChapters(next.grade, next.subject);
-        next.chapter = newChapters[0]?.code || (isNextTHCS ? 'C1' : '1');
-        const newLessons = newChapters[0]?.lessons || [];
-        next.lesson = newLessons[0]?.code || '1';
+      if (updates.grade !== undefined) {
+        if (next.grade === 'ALL') {
+          next.subject = 'ALL';
+          next.chapter = 'ALL';
+          next.lesson = 'ALL';
+        } else {
+          const isNextTHCS = isGradeTHCS(next.grade);
+          next.subject = isNextTHCS ? 'D' : 'ALL';
+          next.chapter = 'ALL';
+          next.lesson = 'ALL';
+        }
+      } else if (updates.subject !== undefined) {
+        next.chapter = 'ALL';
+        next.lesson = 'ALL';
+      } else if (updates.chapter !== undefined) {
+        next.lesson = 'ALL';
       }
-      else if (updates.chapter) {
-        const currentChapter = dynamicChapters.find(c => c.code === next.chapter);
-        next.lesson = currentChapter?.lessons[0]?.code || '1';
-      }
-      localStorage.setItem('smartPickConfig_v3', JSON.stringify(next));
+      localStorage.setItem('smartPickConfig_v4', JSON.stringify(next));
       return next;
     });
   };
@@ -555,7 +610,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   const updateRow = (id: string, newData: any) => setRows(rows.map(r => r.id === id ? { ...r, ...newData } : r));
   const removeRow = (id: string) => rows.length > 1 && setRows(rows.filter(r => r.id !== id));
 
-  // Tự động chọn bài học đầu tiên có câu hỏi khi mở modal nếu phạm vi mặc định đang trống
+  // Tự động chọn phạm vi có câu hỏi khi mở modal nếu phạm vi mặc định đang trống
   useEffect(() => {
     if (questions.length === 0 || lessonPool.length > 0) return;
     const firstValid = questions.find((q: Question) => q.meta.grade && q.meta.chapter && q.meta.lesson);
@@ -566,11 +621,11 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       const next: SmartPickConfig = {
         ...prev,
         grade: g,
-        subject: isFirstTHCS ? 'D' : (firstValid.meta.subject || 'D'),
+        subject: isFirstTHCS ? 'D' : (firstValid.meta.subject || 'ALL'),
         chapter: firstValid.meta.chapter,
-        lesson: firstValid.meta.lesson
+        lesson: 'ALL'
       };
-      localStorage.setItem('smartPickConfig_v3', JSON.stringify(next));
+      localStorage.setItem('smartPickConfig_v4', JSON.stringify(next));
       return next;
     });
   }, []);
@@ -586,8 +641,6 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       return;
     }
 
-    const targetGradeCode = GRADE_TO_CODE[smartConfig.grade] || smartConfig.grade;
-    const isTHCS = isGradeTHCS(smartConfig.grade);
     const finalSelected: Question[] = [];
     const usedUids = new Set<string>();
 
@@ -615,11 +668,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       }
 
       const typePool = questions.filter((q: Question) => 
-        q.meta.grade === targetGradeCode &&
-        (isTHCS || q.meta.subject === smartConfig.subject) &&
-        q.meta.chapter === smartConfig.chapter &&
-        q.meta.lesson === smartConfig.lesson &&
-        q.type === type
+        matchesSmartScope(q, smartConfig) && q.type === type
       );
 
       if (typePool.length === 0) return;
@@ -758,7 +807,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                 onClick={() => setActiveTab('SMART')} 
                 className={`px-3.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${activeTab === 'SMART' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
               >
-                <Wand2 size={13}/> Bốc theo bài học
+                <Wand2 size={13}/> Bốc theo Chương / Bài
               </button>
               <button 
                 onClick={() => setActiveTab('MATRIX')} 
@@ -806,41 +855,92 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
               
               {/* Scope Selection: Grade, Subject, Chapter, Lesson */}
               <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800/90 space-y-2.5">
-                <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                  <ListFilter size={14} className="text-indigo-400" /> Chọn phạm vi bài học
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <ListFilter size={14} className="text-indigo-400" /> Chọn phạm vi Chương / Bài học
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-400/90">
+                    Đang lọc: {lessonPool.length} câu trong kho
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Khối lớp</label>
                     <select value={smartConfig.grade} onChange={e => updateSmartConfig({grade: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 text-xs shadow-inner">
-                      {Object.entries(GRADE_MAP).map(([k, v]) => <option key={k} value={k === '0' ? '10' : k === '1' ? '11' : k === '2' ? '12' : k}>{v}</option>)}
+                      <option value="ALL">Tất cả Khối lớp{questions.length > 0 ? ` (${questions.length} câu)` : ''}</option>
+                      {Object.entries(GRADE_MAP).map(([k, v]) => {
+                        const val = k === '0' ? '10' : k === '1' ? '11' : k === '2' ? '12' : k;
+                        const gCount = bankIndex._grades?.[val] || 0;
+                        return <option key={k} value={val}>{v}{gCount > 0 ? ` (${gCount} câu)` : ''}</option>;
+                      })}
                     </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Phân môn</label>
-                    {isGradeTHCS(smartConfig.grade) ? (
+                    {smartConfig.grade === 'ALL' ? (
+                      <div className="w-full h-9 bg-slate-950/60 border border-slate-700/80 rounded-xl px-2.5 flex items-center text-slate-400 font-bold text-xs">
+                        Tất cả Phân môn
+                      </div>
+                    ) : isGradeTHCS(smartConfig.grade) ? (
                       <div className="w-full h-9 bg-slate-950/60 border border-slate-700/80 rounded-xl px-2.5 flex items-center text-slate-400 font-bold text-xs">
                         Toán THCS
                       </div>
                     ) : (
                       <select value={smartConfig.subject} onChange={e => updateSmartConfig({subject: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 text-xs shadow-inner">
-                        {getAvailableSubjects(smartConfig.grade).map(s => <option key={s.code} value={s.code}>{s.title}</option>)}
+                        <option value="ALL">Tất cả Phân môn</option>
+                        {getAvailableSubjects(smartConfig.grade).map(s => {
+                          const sCount = bankIndex[`${smartConfig.grade}-${s.code}`]?.total || 0;
+                          return <option key={s.code} value={s.code}>{s.title}{sCount > 0 ? ` (${sCount} câu)` : ''}</option>;
+                        })}
                       </select>
                     )}
                   </div>
                   <div className="space-y-1 col-span-2 md:col-span-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Chương học</label>
+                    <div className="flex items-center justify-between px-1">
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">Chương học</label>
+                      {smartConfig.chapter !== 'ALL' && (
+                        <button
+                          type="button"
+                          onClick={() => updateSmartConfig({ chapter: 'ALL' })}
+                          className="text-[9px] font-black text-indigo-400 hover:text-indigo-300 uppercase"
+                        >
+                          Tất cả chương
+                        </button>
+                      )}
+                    </div>
                     <select value={smartConfig.chapter} onChange={e => updateSmartConfig({chapter: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 truncate text-xs shadow-inner">
+                      <option value="ALL">Tất cả Chương</option>
                       {dynamicChapters.map(c => {
                         const key = isGradeTHCS(smartConfig.grade) ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
-                        const hasLessons = bankIndex[key]?.lessons?.[c.code]?.size || 0;
-                        return <option key={c.code} value={c.code}>{c.title}{hasLessons > 0 ? ` • Có dữ liệu` : ''}</option>;
+                        const chapCount = bankIndex[key]?.chapterTotals?.[c.code] || 0;
+                        return <option key={c.code} value={c.code}>{c.title}{chapCount > 0 ? ` (${chapCount} câu)` : ''}</option>;
                       })}
                     </select>
                   </div>
                   <div className="space-y-1 col-span-2 md:col-span-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Bài học</label>
+                    <div className="flex items-center justify-between px-1">
+                      <label className="text-[9px] font-bold text-slate-400 uppercase">Bài học</label>
+                      <button
+                        type="button"
+                        onClick={() => updateSmartConfig({ lesson: 'ALL' })}
+                        className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded transition-all ${
+                          smartConfig.lesson === 'ALL'
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10'
+                        }`}
+                      >
+                        {smartConfig.lesson === 'ALL' ? '✓ Tất cả bài' : 'Chọn tất cả bài'}
+                      </button>
+                    </div>
                     <select value={smartConfig.lesson} onChange={e => updateSmartConfig({lesson: e.target.value})} className="w-full h-9 bg-slate-950 border border-slate-700/80 rounded-xl px-2.5 text-white font-bold outline-none focus:border-indigo-500 truncate text-xs shadow-inner">
+                      <option value="ALL">
+                        Tất cả Bài học{(() => {
+                          if (smartConfig.chapter === 'ALL') return lessonPool.length > 0 ? ` (${lessonPool.length} câu)` : '';
+                          const key = isGradeTHCS(smartConfig.grade) ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
+                          const chapCount = bankIndex[key]?.chapterTotals?.[smartConfig.chapter] || 0;
+                          return chapCount > 0 ? ` (${chapCount} câu)` : '';
+                        })()}
+                      </option>
                       {dynamicLessons.map(l => {
                         const key = isGradeTHCS(smartConfig.grade) ? `${smartConfig.grade}-THCS` : `${smartConfig.grade}-${smartConfig.subject}`;
                         const countInLesson = bankIndex[`${key}-${smartConfig.chapter}-${l.code}`]?.total || 0;
