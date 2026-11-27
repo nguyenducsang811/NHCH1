@@ -850,7 +850,7 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
                                               {LEVEL_MAP[q.level as LevelCode] || q.level}
                                             </span>
                                             <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                                              {q.type === 'C' ? 'TN' : q.type === 'F' ? 'Đ/S' : 'TL'}
+                                              {q.type === 'C' ? 'TN' : q.type === 'F' ? 'Đ/S' : q.type === 'S' ? 'TLN' : 'TL'}
                                             </span>
                                             <button 
                                               onClick={(e) => {
@@ -901,7 +901,7 @@ const LessonFilter: React.FC<LessonFilterProps> = ({ bankQuestions, onTransferTo
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                                          {q.type === 'C' ? 'Trắc nghiệm' : q.type === 'F' ? 'Đúng/Sai' : 'Tự luận'}
+                                          {q.type === 'C' ? 'Trắc nghiệm' : q.type === 'F' ? 'Đúng/Sai' : q.type === 'S' ? 'Trả lời ngắn' : 'Tự luận'}
                                         </span>
                                         <button 
                                           onClick={(e) => {

@@ -3,7 +3,7 @@ export type GradeCode = '6' | '7' | '8' | '9' | '0' | '1' | '2';
 export type SubjectCode = 'D' | 'H' | 'C' | 'X';
 export type LevelCode = 'N' | 'H' | 'V' | 'C';
 export type EnvType = 'ex' | 'vd' | 'bt';
-export type QuestionType = 'C' | 'F' | 'T'; // Trắc nghiệm, Đúng/Sai, Tự luận
+export type QuestionType = 'C' | 'F' | 'S' | 'T'; // Trắc nghiệm, Đúng/Sai, Trả lời ngắn, Tự luận
 
 export interface QuestionMeta {
   valid: boolean;

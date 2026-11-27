@@ -70,11 +70,12 @@ const App: React.FC = () => {
               </div>
             </header>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
               {[
                 { label: 'Tổng số câu', value: questions.length, color: 'text-blue-400', bg: 'bg-blue-400/5', border: 'border-blue-500/20' },
                 { label: 'Trắc nghiệm (C)', value: questions.filter(q => q.type === 'C').length, color: 'text-emerald-400', bg: 'bg-emerald-400/5', border: 'border-emerald-500/20' },
                 { label: 'Đúng / Sai (F)', value: questions.filter(q => q.type === 'F').length, color: 'text-amber-400', bg: 'bg-amber-400/5', border: 'border-amber-500/20' },
+                { label: 'Trả lời ngắn (S)', value: questions.filter(q => q.type === 'S').length, color: 'text-cyan-400', bg: 'bg-cyan-400/5', border: 'border-cyan-500/20' },
                 { label: 'Tự luận (T)', value: questions.filter(q => q.type === 'T').length, color: 'text-purple-400', bg: 'bg-purple-400/5', border: 'border-purple-500/20' },
               ].map((stat, i) => (
                 <div key={i} className={`${stat.bg} p-8 rounded-[32px] border ${stat.border} shadow-2xl relative overflow-hidden group hover:scale-[1.02] transition-transform`}>

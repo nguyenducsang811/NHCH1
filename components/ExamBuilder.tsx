@@ -97,6 +97,7 @@ const ExamBuilder: React.FC<ExamBuilderProps> = ({ questions, onRemove }) => {
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       q.type === 'C' ? 'bg-emerald-400/10 text-emerald-400' : 
                       q.type === 'F' ? 'bg-amber-400/10 text-amber-400' : 
+                      q.type === 'S' ? 'bg-cyan-400/10 text-cyan-400' :
                       'bg-purple-400/10 text-purple-400'
                     }`}>
                       {q.type}

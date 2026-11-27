@@ -299,6 +299,7 @@ const MatrixRow = ({ data, allQuestions, onUpdate, onRemove }: any) => {
           <option value="ALL">Loại</option>
           <option value="C">Trắc nghiệm</option>
           <option value="F">Đúng/Sai</option>
+          <option value="S">Trả lời ngắn</option>
           <option value="T">Tự luận</option>
         </select>
       </td>
@@ -343,43 +344,49 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
     subject: string;
     chapter: string;
     lesson: string;
-    selectedTypes: { C: boolean; F: boolean; T: boolean };
-    targets: { C: number; F: number; T: number };
+    selectedTypes: { C: boolean; F: boolean; S: boolean; T: boolean };
+    targets: { C: number; F: number; S: number; T: number };
     useCustomLevels: boolean;
     customLevelTargets: {
       C: LevelCounts;
       F: LevelCounts;
+      S: LevelCounts;
       T: LevelCounts;
     };
   }
 
   const [smartConfig, setSmartConfig] = useState<SmartPickConfig>(() => {
+    const defaultConfig: SmartPickConfig = {
+      grade: '10', subject: 'D', chapter: '1', lesson: '1',
+      selectedTypes: { C: true, F: true, S: true, T: true },
+      targets: { C: 20, F: 10, S: 10, T: 10 },
+      useCustomLevels: false,
+      customLevelTargets: {
+        C: { N: 6, H: 6, V: 4, C: 4 },
+        F: { N: 3, H: 3, V: 2, C: 2 },
+        S: { N: 3, H: 3, V: 2, C: 2 },
+        T: { N: 3, H: 3, V: 2, C: 2 }
+      }
+    };
     const saved = localStorage.getItem('smartPickConfig_v3');
     if (saved) {
       try { 
         const parsed = JSON.parse(saved); 
         return {
-          useCustomLevels: false,
+          ...defaultConfig,
+          ...parsed,
+          selectedTypes: { ...defaultConfig.selectedTypes, ...(parsed.selectedTypes || {}) },
+          targets: { ...defaultConfig.targets, ...(parsed.targets || {}) },
           customLevelTargets: {
-            C: { N: 6, H: 6, V: 4, C: 4 },
-            F: { N: 3, H: 3, V: 2, C: 2 },
-            T: { N: 6, H: 6, V: 4, C: 4 }
-          },
-          ...parsed
+            C: { ...defaultConfig.customLevelTargets.C, ...(parsed.customLevelTargets?.C || {}) },
+            F: { ...defaultConfig.customLevelTargets.F, ...(parsed.customLevelTargets?.F || {}) },
+            S: { ...defaultConfig.customLevelTargets.S, ...(parsed.customLevelTargets?.S || {}) },
+            T: { ...defaultConfig.customLevelTargets.T, ...(parsed.customLevelTargets?.T || {}) }
+          }
         };
       } catch (e) { console.error(e); }
     }
-    return { 
-      grade: '10', subject: 'D', chapter: '1', lesson: '1', 
-      selectedTypes: { C: true, F: true, T: true },
-      targets: { C: 20, F: 10, T: 20 },
-      useCustomLevels: false,
-      customLevelTargets: {
-        C: { N: 6, H: 6, V: 4, C: 4 },
-        F: { N: 3, H: 3, V: 2, C: 2 },
-        T: { N: 6, H: 6, V: 4, C: 4 }
-      }
-    };
+    return defaultConfig;
   });
 
   const bankIndex = useMemo(() => {
@@ -392,13 +399,13 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       const l = q.meta.lesson;
 
       const key = `${g}-${s}`;
-      if (!index[key]) index[key] = { C: 0, F: 0, T: 0, total: 0, chapters: new Set(), lessons: {} };
+      if (!index[key]) index[key] = { C: 0, F: 0, S: 0, T: 0, total: 0, chapters: new Set(), lessons: {} };
       
       const chapKey = `${key}-${c}`;
       if (!index[key].lessons[c]) index[key].lessons[c] = new Set();
       
       const lessonKey = `${chapKey}-${l}`;
-      if (!index[lessonKey]) index[lessonKey] = { C: 0, F: 0, T: 0, total: 0 };
+      if (!index[lessonKey]) index[lessonKey] = { C: 0, F: 0, S: 0, T: 0, total: 0 };
       
       index[key].chapters.add(c);
       index[key].lessons[c].add(l);
@@ -447,15 +454,16 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   }, [questions, smartConfig.grade, smartConfig.subject, smartConfig.chapter, smartConfig.lesson]);
 
   const availableStats = useMemo(() => {
-    const stats: Record<'C' | 'F' | 'T', { total: number; N: number; H: number; V: number; C: number; forms: Set<string> }> = {
+    const stats: Record<QuestionType, { total: number; N: number; H: number; V: number; C: number; forms: Set<string> }> = {
       C: { total: 0, N: 0, H: 0, V: 0, C: 0, forms: new Set<string>() },
       F: { total: 0, N: 0, H: 0, V: 0, C: 0, forms: new Set<string>() },
+      S: { total: 0, N: 0, H: 0, V: 0, C: 0, forms: new Set<string>() },
       T: { total: 0, N: 0, H: 0, V: 0, C: 0, forms: new Set<string>() },
     };
     const totalForms = new Set<string>();
 
     lessonPool.forEach((q: Question) => {
-      const type = q.type as 'C' | 'F' | 'T';
+      const type = q.type as QuestionType;
       if (stats[type]) {
         stats[type].total++;
         let lv = q.level;
@@ -676,12 +684,13 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
   const typeMapInfo = [
     { key: 'C', name: 'Trắc nghiệm', available: availableStats.C },
     { key: 'F', name: 'Đúng / Sai', available: availableStats.F },
-    { key: 'T', name: 'Tự luận / Trả lời ngắn', available: availableStats.T }
+    { key: 'S', name: 'Trả lời ngắn', available: availableStats.S },
+    { key: 'T', name: 'Tự luận', available: availableStats.T }
   ] as const;
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 backdrop-blur-md p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-[#1e293b] border border-slate-700/80 w-full max-w-5xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] h-auto overflow-hidden">
+      <div className="bg-[#1e293b] border border-slate-700/80 w-full max-w-6xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] h-auto overflow-hidden">
         
         {/* Modal Header */}
         <div className="px-5 py-3.5 border-b border-slate-700/80 flex flex-wrap items-center justify-between gap-3 bg-slate-800/80">
@@ -815,8 +824,8 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                 </div>
               </div>
 
-              {/* Cards for Question Types (Trắc nghiệm, Đúng/Sai, Tự luận) */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {/* Cards for Question Types (Trắc nghiệm, Đúng/Sai, Trả lời ngắn, Tự luận) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 {typeMapInfo.map(tInfo => {
                   const typeKey = tInfo.key as QuestionType;
                   const isChecked = smartConfig.selectedTypes[typeKey];
@@ -1161,7 +1170,7 @@ const ManageQuestions: React.FC<ManageQuestionsProps> = ({ questions, onAddToExa
 
     try {
       await new Promise(resolve => setTimeout(resolve, 1500)); 
-      const clean = (s: string) => s.toLowerCase().replace(/\\begin\{.*\}|\\end\{.*\}|%\[.*\]|\\choice|\\choiceTF|\\loigiai/g, '').replace(/\s+/g, '');
+      const clean = (s: string) => s.toLowerCase().replace(/\\begin\{.*\}|\\end\{.*\}|%\[.*\]|\\choice|\\choiceTF|\\shortans|\\loigiai/g, '').replace(/\s+/g, '');
       const getBigrams = (s: string) => {
         const bigrams = new Set();
         for (let i = 0; i < s.length - 1; i++) bigrams.add(s.substring(i, i + 2));
@@ -1200,10 +1209,10 @@ const ManageQuestions: React.FC<ManageQuestionsProps> = ({ questions, onAddToExa
   };
 
   const stats = useMemo(() => {
-    const s = { C: [0,0,0,0,0], F: [0,0,0,0,0], T: [0,0,0,0,0], Sum: [0,0,0,0,0] };
+    const s: Record<QuestionType | 'Sum', number[]> = { C: [0,0,0,0,0], F: [0,0,0,0,0], S: [0,0,0,0,0], T: [0,0,0,0,0], Sum: [0,0,0,0,0] };
     examList.forEach(q => {
       const lvIdx = ['N', 'H', 'V', 'C'].indexOf(q.level);
-      if (lvIdx !== -1) { s[q.type][lvIdx]++; s[q.type][4]++; s.Sum[lvIdx]++; s.Sum[4]++; }
+      if (lvIdx !== -1 && s[q.type]) { s[q.type][lvIdx]++; s[q.type][4]++; s.Sum[lvIdx]++; s.Sum[4]++; }
     });
     return s;
   }, [examList]);
@@ -1298,7 +1307,7 @@ const ManageQuestions: React.FC<ManageQuestionsProps> = ({ questions, onAddToExa
                 <select value={fLevel} onChange={e => setFLevel(e.target.value as any)} className="w-full bg-[#0f172a] border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-bold text-white outline-none focus:border-blue-500 transition-all"><option value="ALL">Tất cả Mức</option>{Object.entries(LEVEL_MAP).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
               </div>
               <div className="w-48 space-y-1.5"><label className="text-[10px] font-black text-slate-500 uppercase ml-1 tracking-widest">Loại câu</label>
-                <select value={fType} onChange={e => setFType(e.target.value as any)} className="w-full bg-[#0f172a] border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-bold text-white outline-none focus:border-blue-500 transition-all"><option value="ALL">Tất cả Loại</option><option value="C">Trắc nghiệm (C)</option><option value="F">Đúng/Sai (F)</option><option value="T">Tự luận (T)</option></select>
+                <select value={fType} onChange={e => setFType(e.target.value as any)} className="w-full bg-[#0f172a] border border-slate-700 rounded-lg px-3 py-2.5 text-xs font-bold text-white outline-none focus:border-blue-500 transition-all"><option value="ALL">Tất cả Loại</option><option value="C">Trắc nghiệm (C)</option><option value="F">Đúng/Sai (F)</option><option value="S">Trả lời ngắn (S)</option><option value="T">Tự luận (T)</option></select>
               </div>
               <div className="flex-1 space-y-1.5"><label className="text-[10px] font-black text-slate-500 uppercase ml-1 tracking-widest">Tìm kiếm nội dung</label>
                 <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16}/><input type="text" placeholder="Tìm kiếm nội dung..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full bg-[#0f172a] border border-slate-700 rounded-lg pl-10 pr-3 py-2.5 text-xs outline-none focus:border-blue-500/50 text-white" /></div>
@@ -1352,7 +1361,7 @@ const ManageQuestions: React.FC<ManageQuestionsProps> = ({ questions, onAddToExa
                       <td className="p-3 text-center text-slate-600 font-mono text-[10px]">{idx + 1}</td>
                       <td className="p-3 font-mono text-[10px] font-bold text-blue-400/80 truncate whitespace-nowrap overflow-hidden pr-4">{q.idString}</td>
                       <td className="p-3 text-[11px] text-slate-400 truncate opacity-70 italic">"{q.content}"</td>
-                      <td className="p-3 text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-black ${q.type === 'C' ? 'text-emerald-400 bg-emerald-400/10' : q.type === 'F' ? 'text-amber-400 bg-amber-400/10' : 'text-purple-400 bg-purple-400/10'}`}>{q.type}</span></td>
+                      <td className="p-3 text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-black ${q.type === 'C' ? 'text-emerald-400 bg-emerald-400/10' : q.type === 'F' ? 'text-amber-400 bg-amber-400/10' : q.type === 'S' ? 'text-cyan-400 bg-cyan-400/10' : 'text-purple-400 bg-purple-400/10'}`}>{q.type}</span></td>
                     </tr>
                 ))}
               </tbody>
@@ -1422,11 +1431,11 @@ const ManageQuestions: React.FC<ManageQuestionsProps> = ({ questions, onAddToExa
            <div className="flex-1 p-3 bg-[#0f172a]/50">
              <table className="w-full h-full text-[10px] border-collapse font-mono">
                <thead className="bg-slate-900/80 text-slate-600 text-[8px] font-black uppercase">
-                 <tr><th className="p-1.5 border border-slate-800"></th><th className="p-1.5 border border-slate-800 text-emerald-500">TN</th><th className="p-1.5 border border-slate-800 text-amber-500">DS</th><th className="p-1.5 border border-slate-800 text-purple-500">TL</th><th className="p-1.5 border border-slate-800 text-blue-500">Σ</th></tr>
+                 <tr><th className="p-1.5 border border-slate-800"></th><th className="p-1.5 border border-slate-800 text-emerald-500">TN</th><th className="p-1.5 border border-slate-800 text-amber-500">DS</th><th className="p-1.5 border border-slate-800 text-cyan-400">TLN</th><th className="p-1.5 border border-slate-800 text-purple-500">TL</th><th className="p-1.5 border border-slate-800 text-blue-500">Σ</th></tr>
                </thead>
                <tbody>
-                 {[0,1,2,3].map((lv, i) => (<tr key={i}><td className="p-1.5 border border-slate-800 text-center text-slate-600 font-black">M{i+1}</td><td className="p-1.5 border border-slate-800 text-center">{stats.C[i]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.F[i]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.T[i]}</td><td className="p-1.5 border border-slate-800 text-center text-blue-400/70 font-bold">{stats.Sum[i]}</td></tr>))}
-                 <tr className="bg-blue-600/10 font-bold text-blue-400"><td className="p-1.5 border border-slate-800 text-center font-black">Σ</td><td className="p-1.5 border border-slate-800 text-center">{stats.C[4]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.F[4]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.T[4]}</td><td className="p-1.5 border border-slate-800 text-center text-cyan-400">{stats.Sum[4]}</td></tr>
+                 {[0,1,2,3].map((lv, i) => (<tr key={i}><td className="p-1.5 border border-slate-800 text-center text-slate-600 font-black">M{i+1}</td><td className="p-1.5 border border-slate-800 text-center">{stats.C[i]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.F[i]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.S[i]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.T[i]}</td><td className="p-1.5 border border-slate-800 text-center text-blue-400/70 font-bold">{stats.Sum[i]}</td></tr>))}
+                 <tr className="bg-blue-600/10 font-bold text-blue-400"><td className="p-1.5 border border-slate-800 text-center font-black">Σ</td><td className="p-1.5 border border-slate-800 text-center">{stats.C[4]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.F[4]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.S[4]}</td><td className="p-1.5 border border-slate-800 text-center">{stats.T[4]}</td><td className="p-1.5 border border-slate-800 text-center text-cyan-400">{stats.Sum[4]}</td></tr>
                </tbody>
              </table>
            </div>

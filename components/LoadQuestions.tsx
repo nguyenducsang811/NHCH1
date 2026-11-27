@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import { 
-  FileUp, Trash2, List, FileText, CheckSquare, HelpCircle, 
+  FileUp, Trash2, List, FileText, CheckSquare, HelpCircle, Hash,
   Upload, AlertTriangle, ExternalLink, Loader2, Files,
   CheckCircle2, XCircle, Info, X, Save, Eye, Check
 } from 'lucide-react';
@@ -120,9 +120,10 @@ const LoadQuestions: React.FC<LoadQuestionsProps> = ({ onQuestionsLoaded, allQue
   }, [lastParsed]);
 
   const stats = useMemo(() => {
-    const data = { C: [0, 0, 0, 0, 0], F: [0, 0, 0, 0, 0], T: [0, 0, 0, 0, 0] };
+    const data: Record<QuestionType, number[]> = { C: [0, 0, 0, 0, 0], F: [0, 0, 0, 0, 0], S: [0, 0, 0, 0, 0], T: [0, 0, 0, 0, 0] };
     allQuestions.forEach(q => {
-      const type = q.type as 'C' | 'F' | 'T';
+      const type = q.type as QuestionType;
+      if (!data[type]) return;
       const levelIdx = ['N', 'H', 'V', 'C'].indexOf(q.level);
       if (levelIdx !== -1) data[type][levelIdx]++;
       data[type][4]++;
@@ -261,9 +262,10 @@ const LoadQuestions: React.FC<LoadQuestionsProps> = ({ onQuestionsLoaded, allQue
         {/* BOTTOM RIGHT: STATS GRID */}
         <div className="bg-slate-900/40 border border-slate-800 rounded-[40px] p-10 flex flex-col">
           <h3 className="text-xs font-black text-white uppercase tracking-[0.2em] mb-8 border-b border-slate-800 pb-5">TỔNG QUAN KHO CÂU HỎI</h3>
-          <div className="flex flex-col md:flex-row gap-6 flex-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
             <StatColumn type="C" title="Trắc nghiệm" icon={HelpCircle} color="text-emerald-400" data={stats.C} />
             <StatColumn type="F" title="Đúng - Sai" icon={CheckSquare} color="text-amber-400" data={stats.F} />
+            <StatColumn type="S" title="Trả lời ngắn" icon={Hash} color="text-cyan-400" data={stats.S} />
             <StatColumn type="T" title="Tự luận" icon={FileText} color="text-purple-400" data={stats.T} />
           </div>
         </div>

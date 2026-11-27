@@ -383,6 +383,7 @@ export const parseLatex = (text: string): Question[] => {
     let qType: QuestionType = 'T';
     if (body.includes('\\choiceTF')) qType = 'F';
     else if (body.includes('\\choice')) qType = 'C';
+    else if (body.includes('\\shortans')) qType = 'S';
 
     questions.push({
       uid: Math.random().toString(36).substr(2, 9) + Date.now(),
