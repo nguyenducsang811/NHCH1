@@ -168,6 +168,48 @@ const LEVEL_FALLBACK_ORDER: Record<LevelCode, LevelCode[]> = {
   'N': ['N', 'H', 'V', 'C']
 };
 
+const compareFormCodes = (a: string, b: string): number => {
+  const numA = parseInt(a, 10);
+  const numB = parseInt(b, 10);
+  if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numA - numB;
+  return a.localeCompare(b, 'vi', { numeric: true });
+};
+
+const LEVEL_SORT_ORDER: Record<string, number> = { N: 0, H: 1, V: 2, C: 3 };
+
+// Sắp xếp danh sách câu đã bốc theo đúng vòng lặp tuần tự: Dạng 1 -> Dạng 2 -> Dạng 3 -> quay lại Dạng 1 -> 2 -> 3...
+const interleaveByFormSequential = (picked: Question[]): Question[] => {
+  if (picked.length <= 1) return picked;
+  const groups: Record<string, Question[]> = {};
+  picked.forEach(q => {
+    const f = q.meta.form || '1';
+    if (!groups[f]) groups[f] = [];
+    groups[f].push(q);
+  });
+
+  const sortedForms = Object.keys(groups).sort(compareFormCodes);
+  sortedForms.forEach(f => {
+    groups[f].sort((a, b) => {
+      const la = LEVEL_SORT_ORDER[normalizeLevel(a.level)] ?? 99;
+      const lb = LEVEL_SORT_ORDER[normalizeLevel(b.level)] ?? 99;
+      return la - lb;
+    });
+  });
+
+  const result: Question[] = [];
+  let hasMore = true;
+  while (hasMore) {
+    hasMore = false;
+    for (const f of sortedForms) {
+      if (groups[f].length > 0) {
+        result.push(groups[f].shift()!);
+        hasMore = true;
+      }
+    }
+  }
+  return result;
+};
+
 const pickFromPoolRoundRobin = (
   pool: Question[],
   count: number,
@@ -185,20 +227,21 @@ const pickFromPoolRoundRobin = (
     formGroups[f].push(q);
   });
 
-  // Shuffle questions within each form group
-  Object.keys(formGroups).forEach(f => {
+  const sortedForms = Object.keys(formGroups).sort(compareFormCodes);
+
+  // Xáo trộn câu hỏi bên trong từng dạng để mỗi lần bốc không bị lặp đề
+  sortedForms.forEach(f => {
     formGroups[f].sort(() => Math.random() - 0.5);
   });
 
   const pickedList: Question[] = [];
   while (pickedList.length < count) {
-    const nonEmptyForms = Object.keys(formGroups).filter(f => formGroups[f].length > 0);
+    const nonEmptyForms = sortedForms.filter(f => formGroups[f].length > 0);
     if (nonEmptyForms.length === 0) break;
 
-    // Pick form with minimum picks so far (random tie-break) to maximize form coverage
+    // Bốc tuần tự đúng thứ tự Dạng 1 -> Dạng 2 -> Dạng 3 -> quay lại Dạng 1 (ưu tiên dạng đang có số câu ít nhất)
     const minCount = Math.min(...nonEmptyForms.map(f => formPickCounts[f] || 0));
-    const leastPickedForms = nonEmptyForms.filter(f => (formPickCounts[f] || 0) === minCount);
-    const chosenForm = leastPickedForms[Math.floor(Math.random() * leastPickedForms.length)];
+    const chosenForm = nonEmptyForms.find(f => (formPickCounts[f] || 0) === minCount)!;
 
     const nextQ = formGroups[chosenForm].pop();
     if (nextQ && !usedUids.has(nextQ.uid)) {
@@ -581,18 +624,19 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
 
       if (typePool.length === 0) return;
 
+      const typeSelected: Question[] = [];
       const formPickCounts: Record<string, number> = {};
       const deficits: Record<LevelCode, number> = { N: 0, H: 0, V: 0, C: 0 };
       const exactOrder: LevelCode[] = ['N', 'H', 'V', 'C'];
 
-      // BƯỚC 1: Bốc đúng mức độ trước (xoay vòng qua các dạng bài để phủ đều)
+      // BƯỚC 1: Bốc đúng mức độ trước (xoay vòng tuần tự Dạng 1 -> 2 -> 3 -> quay lại 1, 2, 3)
       exactOrder.forEach(lv => {
         const targetForLevel = levelTargets[lv];
         if (targetForLevel <= 0) return;
 
         const exactPool = typePool.filter(q => normalizeLevel(q.level) === lv && !usedUids.has(q.uid));
         const picked = pickFromPoolRoundRobin(exactPool, targetForLevel, usedUids, formPickCounts);
-        finalSelected.push(...picked);
+        typeSelected.push(...picked);
         deficits[lv] = targetForLevel - picked.length;
       });
 
@@ -609,7 +653,7 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
           if (fbPool.length === 0) continue;
 
           const picked = pickFromPoolRoundRobin(fbPool, remaining, usedUids, formPickCounts);
-          finalSelected.push(...picked);
+          typeSelected.push(...picked);
           remaining -= picked.length;
         }
         deficits[lv] = remaining;
@@ -620,8 +664,11 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       if (totalStillNeeded > 0) {
         const leftoverPool = typePool.filter(q => !usedUids.has(q.uid));
         const picked = pickFromPoolRoundRobin(leftoverPool, totalStillNeeded, usedUids, formPickCounts);
-        finalSelected.push(...picked);
+        typeSelected.push(...picked);
       }
+
+      // Sắp xếp đầu ra theo đúng vòng xoay Dạng 1 -> Dạng 2 -> Dạng 3 -> quay lại Dạng 1, 2, 3...
+      finalSelected.push(...interleaveByFormSequential(typeSelected));
     });
 
     if (finalSelected.length === 0) {
@@ -651,10 +698,11 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
       });
       if (basePool.length === 0) return;
 
+      const rowSelected: Question[] = [];
       const formPickCounts: Record<string, number> = {};
       if (row.level === 'ALL') {
         const picked = pickFromPoolRoundRobin(basePool, row.neededCount, globalSelectedUids, formPickCounts);
-        finalQuestions.push(...picked);
+        rowSelected.push(...picked);
       } else {
         let remaining = row.neededCount;
         const levelOrder = LEVEL_FALLBACK_ORDER[row.level as LevelCode] || [row.level as LevelCode];
@@ -663,15 +711,16 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
           const lvPool = basePool.filter(q => normalizeLevel(q.level) === lv && !globalSelectedUids.has(q.uid));
           if (lvPool.length === 0) continue;
           const picked = pickFromPoolRoundRobin(lvPool, remaining, globalSelectedUids, formPickCounts);
-          finalQuestions.push(...picked);
+          rowSelected.push(...picked);
           remaining -= picked.length;
         }
         if (remaining > 0) {
           const leftover = basePool.filter(q => !globalSelectedUids.has(q.uid));
           const picked = pickFromPoolRoundRobin(leftover, remaining, globalSelectedUids, formPickCounts);
-          finalQuestions.push(...picked);
+          rowSelected.push(...picked);
         }
       }
+      finalQuestions.push(...interleaveByFormSequential(rowSelected));
     });
 
     if (finalQuestions.length === 0) {
@@ -1002,11 +1051,11 @@ const RandomSelectionModal = ({ questions, onClose, onConfirm }: any) => {
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-emerald-400 flex-shrink-0" />
                   <span>
-                    <strong className="text-white">Phủ đều dạng bài ({availableStats.totalForms.size} dạng)</strong> & <strong className="text-amber-300">Tự động bù mức liền kề trước</strong> (VDC → VD → TH → NB) nếu thiếu câu ở mức độ yêu cầu.
+                    <strong className="text-white">Xoay vòng tuần tự ({availableStats.totalForms.size} dạng):</strong> Dạng 1 → 2 → 3 → quay lại từ đầu & <strong className="text-amber-300">Tự động bù mức liền kề trước</strong> (VDC → VD → TH → NB).
                   </span>
                 </div>
                 <span className="text-[9px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/20 whitespace-nowrap">
-                  Ưu tiên phủ ≥ 2/3 dạng
+                  Xoay đều 1 → 2 → 3
                 </span>
               </div>
 
